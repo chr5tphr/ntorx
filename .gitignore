@@ -1,0 +1,5 @@
+*.gz
+.python
+*.egg-info
+__pycache__
+sandbox
