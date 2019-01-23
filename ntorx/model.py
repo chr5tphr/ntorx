@@ -50,8 +50,8 @@ class Parametric(Module):
         pass
 
 class SeqClassifier(Sequential, Parametric):
-    def train_params(self, dataset, validset=None, bsize=1, nepochs=1, spath=None, start=0, sfreq=5, dev=None, **kwargs):
-        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=4)
+    def train_params(self, dataset, validset=None, bsize=1, nepochs=1, spath=None, start=0, sfreq=5, dev=None, nslope=5, **kwargs):
+        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=kwargs.get('num_workers', 0))
         nsampmx = len(dataset)
 
         cpu = torch.device('cpu')
@@ -64,61 +64,60 @@ class SeqClassifier(Sequential, Parametric):
         optfn  = Adam
         opti = optfn(self.parameters(), lr=lr)
 
-        nslope = 5
-
         self.train()
         valoss = []
         logger.info('Starting training...')
         for epoch in range(start, start+nepochs):
             # Optimize
-            closs = 0.
-            nsamp = 0
-            for data, label in loader:
-                x = data.to(dev)
-                t = label.to(dev)
+            try:
+                closs = 0.
+                nsamp = 0
+                for data, label in loader:
+                    x = data.to(dev)
+                    t = label.to(dev)
 
-                y = self(x)
-                loss = lossfn(y, t)
-                closs += loss.detach().item()
+                    y = self(x)
+                    loss = lossfn(y, t)
+                    closs += loss.detach().item()
 
-                opti.zero_grad()
-                loss.backward()
-                opti.step()
-                del loss
+                    opti.zero_grad()
+                    loss.backward()
+                    opti.step()
+                    del loss
 
-                nsamp += len(data)
-                logger.info('Processed %d/%d samples...', nsamp, nsampmx)
-                del x, y
+                    nsamp += len(data)
+                    logger.info('Processed %d/%d samples...', nsamp, nsampmx)
+                    del x, y
 
-            logger.info('Epoch: %03d, train-loss: %.2e'%(epoch, closs))
+                logger.info('Epoch: %03d, train-loss: %.2e'%(epoch+1, closs/nsamp))
 
-            if validset is not None:
-                # Compute validation loss and, if appropriate, update learning rate
-                cval = self.loss_params(validset, bsize)
-                valoss.append(cval)
-
-                logger.info('Epoch: %03d, valid-loss: %.2e'%(epoch, valoss[-1]))
-                if len(valoss) >= nslope:
-                    a = np.arange(nslope)
-                    a -= a.mean()
-                    b = np.array(valoss[-nslope:])
-                    b -= b.mean()
-                    slope = (a*b).sum() / (a**2).sum()
-                    logger.info('Epoch: %03d, slope: %.2e'%(epoch, slope))
-
-                    if slope > -0.01:
-                        valoss = []
-                        lr *= .1
-                        for gr in opti.param_groups:
-                            gr['lr'] = lr
-
-            # Save model params
-            if (not ((epoch % sfreq) + 1) or (epoch == start+nepochs-1)) and spath:
-                dest = self.save_params(spath, epoch=epoch+1, **kwargs)
-                logger.info('Saved parameters to \'{}\''.format(dest))
                 if validset is not None:
-                    acc = self.test_params(validset, bsize)
-                    logger.info('Epoch: {:03d} , acc: {:.2e}'.format(epoch, acc))
+                    # Compute validation loss and, if appropriate, update learning rate
+                    cval = self.loss_params(validset, bsize)
+                    valoss.append(cval)
+
+                    logger.info('Epoch: %03d, valid-loss: %.2e'%(epoch, valoss[-1]))
+                    if len(valoss) >= nslope:
+                        a = np.arange(nslope)
+                        a -= a.mean()
+                        b = np.array(valoss[-nslope:])
+                        b -= b.mean()
+                        slope = (a*b).sum() / (a**2).sum()
+                        logger.info('Epoch: %03d, slope: %.2e'%(epoch+1, slope))
+
+                        if slope > -0.01:
+                            valoss = []
+                            lr *= .1
+                            for gr in opti.param_groups:
+                                gr['lr'] = lr
+            finally:
+                # Save model params
+                if (not ((epoch + 1) % sfreq) or (epoch == start+nepochs-1)) and spath:
+                    dest = self.save_params(spath, epoch=epoch+1, **kwargs)
+                    logger.info('Saved parameters to \'{}\''.format(dest))
+                    if validset is not None:
+                        acc = self.test_params(validset, bsize)
+                        logger.info('Epoch: {:03d} , acc: {:.2e}'.format(epoch, acc))
 
     def test_params(self, dataset, bsize=1):
         loader = DataLoader(dataset, bsize, shuffle=False, num_workers=4)
@@ -146,12 +145,14 @@ class SeqClassifier(Sequential, Parametric):
         acc /= len(dataset)
         return acc
 
-    def loss_params(self, dataset, bsize=1):
+    def loss_params(self, dataset, bsize=1, dev=None):
         loader = DataLoader(dataset, bsize, shuffle=False, num_workers=4)
 
-        dev    = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        if dev is None:
+            dev    = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(dev)
         lossfn = CrossEntropyLoss()
+        loss = 0
 
         self.train(False)
         acc = 0
@@ -161,4 +162,4 @@ class SeqClassifier(Sequential, Parametric):
             y = self(x)
 
             loss += lossfn(y, t).item()
-        return loss
+        return loss/len(dataset)
