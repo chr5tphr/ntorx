@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from collections import OrderedDict
 
 class Sequential(nn.Sequential):
+    """
+    """
     @contextmanager
     def ondev(self, device):
         try:
@@ -42,4 +44,37 @@ class BatchView(nn.Module):
     def forward(self, x):
         ishape = x.shape
         return x.view(ishape[0], *self._shape)
+
+class Linear(nn.Module):
+    """Abstract Class for linear layers with weights and biases.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.weight = None
+        self.bias = None
+
+    @contextmanager
+    def with_params(self, weight, bias):
+        try:
+            old_weight = self.weight
+            old_bias = self.bias
+            self.weight = weight
+            self.bias = bias
+            yield self
+        finally:
+            self.weight = old_weight
+            self.bias = old_bias
+
+
+class Dense(Linear, nn.Linear):
+    pass
+
+class Conv1d(Linear, nn.Conv1d):
+    pass
+
+class Conv2d(Linear, nn.Conv1d):
+    pass
+
+class Conv3d(Linear, nn.Conv1d):
+    pass
 
