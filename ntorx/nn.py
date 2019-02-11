@@ -50,31 +50,39 @@ class Linear(nn.Module):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight = None
-        self.bias = None
+        if not hasattr(self, 'weight'):
+            self.weight = None
+        if not hasattr(self, 'bias'):
+            self.bias = None
 
     @contextmanager
     def with_params(self, weight, bias):
         try:
-            old_weight = self.weight
-            old_bias = self.bias
-            self.weight = weight
-            self.bias = bias
+            old_weight = self.weight.data
+            old_bias = self.bias.data
+            self.weight.data = weight
+            self.bias.data = bias
             yield self
         finally:
-            self.weight = old_weight
-            self.bias = old_bias
+            self.weight.data = old_weight
+            self.bias.data = old_bias
 
+_linears = {
+    'Dense' : nn.Linear,
+    'Conv1d': nn.Conv1d,
+    'Conv2d': nn.Conv2d,
+    'Conv3d': nn.Conv3d,
+}
 
-class Dense(Linear, nn.Linear):
-    pass
+_lintypes = {name: type(name, (Linear, base), {}) for name, base in _linears.items()}
 
-class Conv1d(Linear, nn.Conv1d):
-    pass
+def __getattr__(name):
+    try:
+        return _lintypes[name]
+    except KeyError:
+        pass
 
-class Conv2d(Linear, nn.Conv1d):
-    pass
+    raise AttributeError("module '{}' has no attribute '{}'".format(__name__, name))
 
-class Conv3d(Linear, nn.Conv1d):
-    pass
-
+def __dir__():
+    return sorted(list(_linears))

@@ -1,137 +1,162 @@
+import torch
+
 from torch.nn import Module
 from torch import autograd
 
 from .nn import Linear, Sequential
 
 class Attributor(Module):
-    def attribution(self, *args, **kwargs):
-        pass
+    @classmethod
+    def of(clss, ttype):
+        return type('%s%s'%(clss.__name__, ttype.__name__), (clss, ttype), {})
 
-class SequentialAttributor(Attributor):
-    def __init__(self, sequential, *args, **kwargs):
-        assert isinstance(sequential, Sequential)
-        super().__init__(self, *args, **kwargs)
+    def attribution(self, out):
+        raise NotImplementedError()
 
-class PiecewiseLinearAttributor(Attibutor):
-    def __init__(self, linear, activation, *args, **kwargs):
-        assert isinstance(linear, Linear)
-        super().__init__(self, *args, **kwargs)
-        self._linear = linear
-        self._activation = activation
+class SequentialAttributor(Sequential, Attributor):
+    def attribution(self, out):
+        for module in reversed(self._modules.values()):
+            assert isinstance(module, Attributor)
+            out = module.attribution(out)
+
+class PassthroughAttributor(Attributor):
+    def attribution(self, out):
+        return out
+
+class ShapeAttributor(Attributor):
+    def forward(self, x):
+        ishape = x.shape
+        ret = super().forward(x)
+        self._ishape = ishape
+        return ret
+
+    def attribution(self, out):
+        return out.reshape(self._ishape)
+
+class PiecewiseLinearAttributor(Linear, Attributor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._in = None
 
     def forward(self, x):
         self._in = x
-        a = self.linear(x)
-        z = self.activation(a)
-        return z
+        return super().forward(x)
+
+    @classmethod
+    def of(clss, ttype):
+        assert issubclass(ttype, Linear)
+        return super().of(ttype)
 
 class LRPAlphaBeta(PiecewiseLinearAttributor):
-    def __init__(self, alpha=1, beta=0, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
+    def __init__(self, *args, alpha=1, beta=0, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
         self._alpha = alpha
         self._beta = beta
+        self._use_bias = use_bias
 
-    def attribution(self, out, use_bias=False):
+    def attribution(self, out):
         R = out
         a = self._in
-        linear = self._linear
         alpha = self._alpha
         beta = self._beta
 
-        weight = linear.weight
-        wplus = torch.maximum(0., weight)
-        wminus = torch.minimum(0., weight)
+        weight = self.weight.data
+        wplus  = torch.clamp(weight, max=0.)
+        wminus = torch.clamp(weight, min=0.)
 
         bplus = None
         bminus = None
-        if use_bias is not None:
-            bias = linear.bias
-            bplus = torch.maximum(0., bias)
-            bminus = torch.minimum(0., bias)
+        if self._use_bias is not None:
+            bias   = self.bias.data
+            bplus  = torch.clamp(bias, max=0.)
+            bminus = torch.clamp(bias, min=0.)
 
         a.requires_grad_()
 
-        with linear.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap:
             zplus = swap(a)
-        cplus, = autograd.grad(zplus, a, grad_outputs=alpha*R/(zplus + (zplus == 0.)))
+        cplus, = autograd.grad(zplus, a, grad_outputs=alpha*R/(zplus + (zplus == 0.)), retain_graph=True)
 
-        with linear.with_params(wminus, bminus) as swap:
+        with self.with_params(wminus, bminus) as swap:
             zminus = swap(a)
-        cminus, = autograd.grad(zminus, a, grad_outputs=beta*R/(zminus + (zminus == 0.)))
+        cminus, = autograd.grad(zminus, a, grad_outputs=beta*R/(zminus + (zminus == 0.)), retain_graph=True)
 
         return a*(cplus - cminus)
 
 class DTDZPlus(PiecewiseLinearAttributor):
-    def attribution(self, out, use_bias=False):
+    def __init__(self, *args, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._use_bias = use_bias
+
+    def attribution(self, out):
         R = out
         a = self._in
-        linear = self.linear
 
-        weight = linear.weight
-        wplus = torch.maximum(0., weight)
+        weight = self.weight.data
+        wplus  = torch.clamp(weight, max=0.)
 
         bplus = None
-        if use_bias is not None:
-            bias = linear.bias
-            bplus = torch.maximum(0., bias)
+        if self._use_bias is not None:
+            bias = self.bias.data
+            bplus  = torch.clamp(bias, max=0.)
 
         a.requires_grad_()
 
-        with linear.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap:
             zplus = swap(a)
-        cplus, = autograd.grad(zplus, a, grad_outputs=R/(zplus + (zplus == 0.)))
+        cplus, = autograd.grad(zplus, a, grad_outputs=R/(zplus + (zplus == 0.)), retain_graph=True)
 
         return a*cplus
 
 class DTDWSquare(PiecewiseLinearAttributor):
-    def attribution(self, out, use_bias=False):
+    def __init__(self, *args, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._use_bias = use_bias
+
+    def attribution(self, out):
         R = out
         a = self._in
-        linear = self.linear
 
-        weight = linear.weight
+        weight = self.weight
         wsquare = weight**2
 
         bplus = None
-        if use_bias is not None:
-            bias = linear.bias
-            bsquare = torch.maximum(0., bias)
+        if self._use_bias is not None:
+            bias = self.bias
+            bsquare = bias**2
 
         a.requires_grad_()
 
-        with linear.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap:
             z = swap(a)
-        c, = autograd.grad(z, a, grad_outputs=R/(z + (z == 0.)))
+        c, = autograd.grad(z, a, grad_outputs=R/(z + (z == 0.)), retain_graph=True)
 
         return c
 
 class DTDZB(PiecewiseLinearAttributor):
-    def __init__(self, lo=1, hi=0, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
+    def __init__(self, *args, lo=0, hi=1, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
         self._lo = lo
         self._hi = hi
+        self._use_bias = use_bias
 
-    def attribution(self, out, lo=-1, hi=1, use_bias=False, **kwargs):
-        if self._in is None:
-            raise RuntimeError('Block has not yet executed forward_logged!')
+    def attribution(self, out, **kwargs):
         R = out
         a = self._in
         lo = self._lo
         hi = self._hi
-        linear = self.linear
 
-        weight = linear.weight
-        wplus = torch.maximum(0., weight)
-        wminus = torch.minimum(0., weight)
+        weight = self.weight.data
+        wplus  = torch.clamp(weight, max=0.)
+        wminus = torch.clamp(weight, min=0.)
 
-        bias = None
-        bplus = None
+        bias   = None
+        bplus  = None
         bminus = None
-        if use_bias is not None:
-            bias = linear.bias
-            bplus = torch.maximum(0., bias)
-            bminus = torch.minimum(0., bias)
+        if self._use_bias is not None:
+            bias   = self.bias.data
+            bplus  = torch.clamp(bias, max=0.)
+            bminus = torch.clamp(bias, min=0.)
 
         upper = torch.ones_like(a)*hi
         lower = torch.ones_like(a)*lo
@@ -141,10 +166,10 @@ class DTDZB(PiecewiseLinearAttributor):
 
         z = linear(a)
 
-        with linear.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap:
             zplus = swap(a)
 
-        with linear.with_params(wminus, bminus) as swap:
+        with self.with_params(wminus, bminus) as swap:
             zminus = swap(a)
 
         zlh = z - zplus - zminus
