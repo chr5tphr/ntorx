@@ -92,7 +92,7 @@ def attribution(args, model, device, test_loader):
             relv = model.attribution(output).sum(dim=1)
 
             break
-    imprint(relv[0])
+    imprint((lambda x: x / np.abs(x).sum(0))(relv[:2*7].cpu().numpy()).reshape(2,7,28,28).transpose(0,2,1,3).reshape(2*28,7*28))
 
 
 def main():

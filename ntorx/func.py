@@ -40,4 +40,34 @@ def one_hot(x, K, dtype=None, device=None):
     :return: x one-hot encoded in last dimension
     :rtype: :py:class:`torch.Tensor`
     """
-    return torch.eye(K, dtype=dtype, device=dtype)[x.flat].
+    return torch.eye(K, dtype=dtype, device=dtype)[x.flat]
+
+def zdiv(a, b, out=None):
+    """Element-wise divides tensor a by non-zero elements of b. Division by zero result indicies of out are left untouched (zero by default)
+
+    :param a: numerator
+    :type a: :py:class:`torch.Tensor`
+    :param b: denominator
+    :type b: :py:class:`torch.Tensor`
+    :param out: tensor where the result is stored
+    :type out: :py:class:`torch.Tensor` or None
+    :rtype b: :py:class:`torch.Tensor`
+    """
+    if out is None:
+        out = torch.zeros_like(a)
+    mask = b != 0
+    out[mask] = a[mask] / b[mask]
+    return out
+
+def zdiv_(a, b):
+    """Element-wise divides tensor a in-place by non-zero elements of b. Division by zero indicies of a are left untouched.
+
+    :param a: numerator
+    :type a: :py:class:`torch.Tensor`
+    :param b: denominator
+    :type b: :py:class:`torch.Tensor`
+    :rtype b: :py:class:`torch.Tensor`
+    """
+    mask = b != 0
+    a[mask] = a[mask] / b[mask]
+    return a

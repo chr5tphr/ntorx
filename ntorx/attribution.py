@@ -4,6 +4,7 @@ from torch.nn import Module
 from torch import autograd
 
 from .nn import Linear, Sequential
+from .func import zdiv
 
 class Attributor(Module):
     @classmethod
@@ -18,6 +19,7 @@ class SequentialAttributor(Sequential, Attributor):
         for module in reversed(self._modules.values()):
             assert isinstance(module, Attributor)
             out = module.attribution(out)
+        return out
 
 class PassthroughAttributor(Attributor):
     def attribution(self, out):
@@ -73,13 +75,13 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
 
         a.requires_grad_()
 
-        with self.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap, autograd.enable_grad():
             zplus = swap(a)
-        cplus, = autograd.grad(zplus, a, grad_outputs=alpha*R/(zplus + (zplus == 0.)), retain_graph=True)
+        cplus, = autograd.grad(zplus, a, grad_outputs=alpha*zdiv(R, zplus), retain_graph=True)
 
-        with self.with_params(wminus, bminus) as swap:
+        with self.with_params(wminus, bminus) as swap, autograd.enable_grad():
             zminus = swap(a)
-        cminus, = autograd.grad(zminus, a, grad_outputs=beta*R/(zminus + (zminus == 0.)), retain_graph=True)
+        cminus, = autograd.grad(zminus, a, grad_outputs=beta*zdiv(R, zminus), retain_graph=True)
 
         return a*(cplus - cminus)
 
@@ -102,9 +104,9 @@ class DTDZPlus(PiecewiseLinearAttributor):
 
         a.requires_grad_()
 
-        with self.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap, autograd.enable_grad():
             zplus = swap(a)
-        cplus, = autograd.grad(zplus, a, grad_outputs=R/(zplus + (zplus == 0.)), retain_graph=True)
+        cplus, = autograd.grad(zplus, a, grad_outputs=zdiv(R, zplus), retain_graph=True)
 
         return a*cplus
 
@@ -127,9 +129,9 @@ class DTDWSquare(PiecewiseLinearAttributor):
 
         a.requires_grad_()
 
-        with self.with_params(wplus, bplus) as swap:
+        with self.with_params(wplus, bplus) as swap, autograd.enable_grad():
             z = swap(a)
-        c, = autograd.grad(z, a, grad_outputs=R/(z + (z == 0.)), retain_graph=True)
+        c, = autograd.grad(z, a, grad_outputs=zdiv(R, z), retain_graph=True)
 
         return c
 
@@ -164,15 +166,16 @@ class DTDZB(PiecewiseLinearAttributor):
         upper.requires_grad_()
         lower.requires_grad_()
 
-        z = linear(a)
+        with autograd.enable_grad():
+            z = self(a)
+            with self.with_params(wplus, bplus) as swap:
+                zplus = swap(lower)
 
-        with self.with_params(wplus, bplus) as swap:
-            zplus = swap(a)
+            with self.with_params(wminus, bminus) as swap:
+                zminus = swap(upper)
 
-        with self.with_params(wminus, bminus) as swap:
-            zminus = swap(a)
-
-        zlh = z - zplus - zminus
-        zlh.backward(R/(zlh + (zlh == 0.)))
-        return a*a.grad + upper*upper.grad + lower*lower.grad
+            zlh = z - zplus - zminus
+        agrad, lgrad, ugrad = autograd.grad((zlh,), (a, lower, upper), grad_outputs=(zdiv(R, zlh),), retain_graph=True)
+        #zlh.backward(zdiv(R, zlh), retain_graph=True)
+        return a*agrad + lower*lgrad + upper*ugrad
 
