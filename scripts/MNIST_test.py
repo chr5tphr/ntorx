@@ -17,8 +17,8 @@ from torchvision import datasets, transforms
 #from termex.enums import ExplainingMethod, LRPRule
 #from termex.networks import ExplainableSequential
 
-from ntorx.nn import Dense, BatchView
-from ntorx.attribution import DTDZPlus, DTDZB, ShapeAttributor, SequentialAttributor
+from ntorx.nn import Dense, BatchView, PaSU
+from ntorx.attribution import DTDZPlus, DTDZB, ShapeAttributor, SequentialAttributor, PassthroughAttributor
 from ntorx.model import Parametric
 from ntorx.util import config_logger
 
@@ -37,12 +37,16 @@ class FeedFwd(SequentialAttributor, Parametric):
         ABatchView = ShapeAttributor.of(BatchView)
         BDense = DTDZB.of(Dense)
         PDense = DTDZPlus.of(Dense)
+        PPaSU  = PassthroughAttributor.of(PaSU)
         super().__init__(
             OrderedDict([
                 ('view0', ABatchView(in_flat)),
-                ('linr1', BDense(in_flat,    1024)),
+                ('linr1', BDense(in_flat,    1024, lo=-1., hi=1.)),
+                ('actv1', PPaSU(1024, relu=False)),
                 ('linr2', PDense(   1024,    1024)),
+                ('actv2', PPaSU(1024, relu=False)),
                 ('linr3', PDense(   1024,    1024)),
+                ('actv3', PPaSU(1024, relu=False)),
                 ('linr4', PDense(   1024, out_dim)),
             ])
         )
@@ -89,7 +93,7 @@ def attribution(args, model, device, test_loader):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            relv = model.attribution(output).sum(dim=1)
+            relv = model.attribution(output.clamp(min=0.)).sum(dim=1)
 
             break
     imprint((lambda x: x / np.abs(x).sum(0))(relv[:2*7].cpu().numpy()).reshape(2,7,28,28).transpose(0,2,1,3).reshape(2*28,7*28))

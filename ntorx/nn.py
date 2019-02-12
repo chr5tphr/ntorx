@@ -45,6 +45,37 @@ class BatchView(nn.Module):
         ishape = x.shape
         return x.view(ishape[0], *self._shape)
 
+class PaSU(nn.Module):
+    """Parameterized Softplus Unit
+    """
+    def __init__(self, features, epsilon=1e-5, relu=True, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.beta = torch.nn.Parameter(torch.Tensor(features))
+        self.epsilon = epsilon
+        self.relu = relu
+        self.reset_parameters()
+
+    def threshold(self, beta):
+        return torch.log(torch.exp(beta * self.epsilon) - 1.) / beta
+
+    def reset_parameters(self):
+        torch.nn.init.constant_(self.beta, 1./self.epsilon)
+
+    def relu(self, mode=True):
+        self.relu = mode
+
+    def forward(self, x):
+        out = torch.nn.functional.relu(x)
+        if not self.relu:
+            beta = torch.clamp(self.beta, self.epsilon)
+            threshold = self.threshold(beta)
+            mask = (x < threshold) * (x > -threshold)
+            fmask = mask.nonzero()[:, 1]
+            if fmask.shape[0] > 0:
+                out[mask] = torch.log(torch.exp(beta[fmask] * x[mask]) + 1.) / beta[fmask]
+        return out
+
+
 class Linear(nn.Module):
     """Abstract Class for linear layers with weights and biases.
     """

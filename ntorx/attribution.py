@@ -21,6 +21,18 @@ class SequentialAttributor(Sequential, Attributor):
             out = module.attribution(out)
         return out
 
+class GradientAttributor(Attributor):
+    def forward(self, x):
+        self._in = x
+        return super().forward(x)
+
+    def attribution(self, out=None, inpt=None):
+        a = self._in if inpt is None else inpt
+        a.requires_grad_()
+        z = self(a)
+        out, = torch.autograd.grad(z, a, grad_outputs=out, retain_graph=True)
+        return out
+
 class PassthroughAttributor(Attributor):
     def attribution(self, out):
         return out
