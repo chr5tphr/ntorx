@@ -56,10 +56,10 @@ class PaSU(nn.Module):
         self.reset_parameters()
 
     def threshold(self, beta):
-        return torch.log(torch.exp(beta * self.epsilon) - 1.) / beta
+        return -torch.log(torch.exp(beta * self.epsilon) - 1.) / beta
 
     def reset_parameters(self):
-        torch.nn.init.constant_(self.beta, 1./self.epsilon)
+        torch.nn.init.constant_(self.beta, 1e3)
 
     def relu(self, mode=True):
         self.relu = mode
@@ -116,4 +116,4 @@ def __getattr__(name):
     raise AttributeError("module '{}' has no attribute '{}'".format(__name__, name))
 
 def __dir__():
-    return sorted(list(_linears))
+    return sorted(list(_linears.keys()))
