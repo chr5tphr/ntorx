@@ -48,8 +48,9 @@ class BatchView(nn.Module):
 class PaSU(nn.Module):
     """Parameterized Softplus Unit
     """
-    def __init__(self, features, epsilon=1e-5, relu=True, *args, **kwargs):
+    def __init__(self, features, init=1e2, epsilon=1e-5, relu=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._init = init
         self.beta = torch.nn.Parameter(torch.Tensor(features))
         self.epsilon = epsilon
         self.relu = relu
@@ -59,7 +60,7 @@ class PaSU(nn.Module):
         return -torch.log(torch.exp(beta * self.epsilon) - 1.) / beta
 
     def reset_parameters(self):
-        torch.nn.init.constant_(self.beta, 1e3)
+        torch.nn.init.constant_(self.beta, self._init)
 
     def relu(self, mode=True):
         self.relu = mode

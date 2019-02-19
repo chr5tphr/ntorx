@@ -27,7 +27,7 @@ def xdg_data_home():
 
 
 class FeedFwd(SequentialAttributor, SequentialParametric):
-    def __init__(self, in_dim, out_dim, relu=True):
+    def __init__(self, in_dim, out_dim, relu=True, beta=1e2):
         in_flat = np.prod(in_dim)
         ABatchView = ShapeAttributor.of(BatchView)
         BDense = DTDZB.of(Dense)
@@ -37,11 +37,11 @@ class FeedFwd(SequentialAttributor, SequentialParametric):
             OrderedDict([
                 ('view0', ABatchView(in_flat)),
                 ('dens1', BDense(in_flat,    1024, lo=-1., hi=1.)),
-                ('actv1', PPaSU(1024, relu=relu)),
+                ('actv1', PPaSU(1024, relu=relu, init=beta)),
                 ('dens2', PDense(   1024,    1024)),
-                ('actv2', PPaSU(1024, relu=relu)),
+                ('actv2', PPaSU(1024, relu=relu, init=beta)),
                 ('dens3', PDense(   1024,    1024)),
-                ('actv3', PPaSU(1024, relu=relu)),
+                ('actv3', PPaSU(1024, relu=relu, init=beta)),
                 ('dens4', PDense(   1024, out_dim)),
             ])
         )
@@ -72,14 +72,39 @@ def main(ctx, log, threads, workers, download, device, datapath):
 @click.option('-n', '--nepochs', type=int, default=10)
 @click.option('-b', '--bsize', type=int, default=32)
 @click.option('-f', '--sfreq', type=int, default=1)
-@click.option('--nslope', type=int, default=1)
+@click.option('--nslope', type=int, default=5)
 @click.option('--lr', type=float, default=1e-3)
-@click.option('--fix-weights/--no-fix-weights', default=False)
-@click.option('--beta-tune/--no-beta-tune', default=False)
-@click.option('--beta-lr', type=float, default=1e-3)
-@click.option('--beta-decay', type=float, default=1e-3)
+@click.option('--beta', type=float, default=1e2)
 @click.pass_context
-def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fix_weights, beta_tune, beta_lr, beta_decay):
+def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, beta):
+    dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
+    loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
+
+    model = FeedFwd((1, 32, 32), 10, relu=False, beta=beta)
+    if load is not None:
+        model.load_params(load)
+    model.device(ctx.obj.device)
+
+    optargs = []
+    wparams = chain(*[module.parameters() for module in model.modules() if not isinstance(module, (torch.nn.Sequential, PaSU))])
+    optargs += [{'params': wparams, 'lr': lr}]
+    optimizer = torch.optim.Adam(optargs)
+
+    model.train_params(loader, optimizer, nepochs=nepochs, nslope=nslope, spath=checkpoint, start=start, sfreq=sfreq)
+
+@main.command()
+@click.option('-c', '--checkpoint', type=click.Path())
+@click.option('-l', '--load', type=click.Path())
+@click.option('-s', '--start', type=int, default=0)
+@click.option('-n', '--nepochs', type=int, default=10)
+@click.option('-b', '--bsize', type=int, default=32)
+@click.option('-f', '--sfreq', type=int, default=1)
+@click.option('--nslope', type=int, default=5)
+@click.option('--lr', type=float, default=1e-3)
+@click.option('--beta-decay', type=float, default=1e-3)
+@click.option('--fix-weights/--no-fix-weights', default=True)
+@click.pass_context
+def betatune(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fix_weights, beta_decay):
     dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
 
@@ -92,27 +117,22 @@ def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fix_w
     if not fix_weights:
         wparams = chain(*[module.parameters() for module in model.modules() if not isinstance(module, (torch.nn.Sequential, PaSU))])
         optargs += [{'params': wparams, 'lr': lr}]
-    if beta_tune:
-        pparams = chain(*[module.parameters() for module in model.modules() if isinstance(module, PaSU)])
-        optargs += [{'params': pparams, 'lr': lr, 'weight_decay': beta_decay}]
+    pparams = chain(*[module.parameters() for module in model.modules() if isinstance(module, PaSU)])
+    optargs += [{'params': pparams, 'lr': lr, 'weight_decay': beta_decay}]
     optimizer = torch.optim.Adam(optargs)
 
     model.train_params(loader, optimizer, nepochs=nepochs, nslope=nslope, spath=checkpoint, start=start, sfreq=sfreq)
 
 @main.command()
-@click.pass_context
-def betatune[]
-
-@main.command()
 @click.option('-l', '--load', type=click.Path())
 @click.option('-b', '--bsize', type=int, default=32)
-@click.option('--beta-tune/--no-beta-tune', default=False)
+@click.option('--force-relu/--no-force-relu', default=False)
 @click.pass_context
-def validate(ctx, load, bsize, beta_tune):
+def validate(ctx, load, bsize, force_relu):
     dataset = MNIST(root=ctx.obj.data, train=False, transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=4)
 
-    model = FeedFwd((1, 32, 32), 10, relu=False)
+    model = FeedFwd((1, 32, 32), 10, relu=force_relu)
     if load is not None:
         model.load_params(load)
     else:
