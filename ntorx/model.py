@@ -50,7 +50,7 @@ class Parametric(Module):
 
     def load_params(self, fpath, *args, **kwargs):
         src  = fpath.format(*args, **kwargs)
-        self.load_state_dict(torch.load(src))
+        self.load_state_dict(torch.load(src, map_location=self.device()))
 
     def train_params(self):
         pass

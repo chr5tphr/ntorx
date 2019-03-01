@@ -1,6 +1,6 @@
 import logging
 from sys import stdout
-from os import environ
+from os import environ, get_terminal_size
 
 def config_logger(fd, reset=True):
     handler = logging.StreamHandler(fd)
@@ -13,3 +13,4 @@ def config_logger(fd, reset=True):
     logger.setLevel(logging.INFO)
 
     return logger
+
