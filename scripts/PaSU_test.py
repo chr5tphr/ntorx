@@ -15,7 +15,7 @@ from torch.nn import Dropout, MaxPool2d, BatchNorm2d, AdaptiveAvgPool2d
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.models.vgg import cfg as vggconfig
-from torchvision.transforms import Pad, ToTensor, Compose
+from torchvision.transforms import Pad, ToTensor, Compose, Normalize, RandomHorizontalFlip, RandomCrop
 from torch import nn
 
 from ntorx.attribution import DTDZPlus, DTDZB, ShapeAttributor, SequentialAttributor, PassthroughAttributor, GradientAttributor
@@ -134,7 +134,8 @@ def main(ctx, log, threads, workers, download, device, datapath):
 @click.pass_context
 def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, beta, force_relu):
     #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=Compose([ToTensor()]), download=ctx.obj.download)
+    transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=transf, download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
 
     #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
@@ -164,7 +165,8 @@ def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, beta,
 @click.pass_context
 def betatune(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fix_weights, beta_decay):
     #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=Compose([ToTensor()]), download=ctx.obj.download)
+    transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=transf, download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
 
     #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
@@ -190,11 +192,12 @@ def betatune(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fi
 @click.pass_context
 def validate(ctx, load, bsize, force_relu):
     #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=Compose([ToTensor()]), download=ctx.obj.download)
+    transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    dataset = CIFAR10(root=ctx.obj.data, train=False , transform=transf, download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
 
-    #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
-    model = VGG16(3, 10, relu=force_relu, beta=beta)
+    #model = FeedFwd((1, 32, 32), 10, relu=force_relu)
+    model = VGG16(3, 10, relu=force_relu)
     if load is not None:
         model.load_params(load)
     else:
@@ -212,11 +215,12 @@ def validate(ctx, load, bsize, force_relu):
 @click.pass_context
 def attribution(ctx, load, bsize, output, force_relu):
     #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=Compose([ToTensor()]), download=ctx.obj.download)
+    transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    dataset = CIFAR10(root=ctx.obj.data, train=False , transform=transf, download=ctx.obj.download)
     loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
 
-    #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
-    model = VGG16(3, 10, relu=force_relu, beta=beta)
+    #model = GradientAttributor.of(FeedFwd)((1, 32, 32), 10, relu=force_relu)
+    model = GradientAttributor.of(VGG16)(3, 10, relu=force_relu)
     if load is not None:
         model.load_params(load)
     else:
@@ -228,7 +232,8 @@ def attribution(ctx, load, bsize, output, force_relu):
     #attrib = model.attribution(model(data))
     attrib = model.attribution(inpt=data)
 
-    carr = np.moveaxis(attrib.detach().cpu().numpy(), 1, -1)
+    #carr = np.moveaxis(attrib.detach().cpu().numpy(), 1, -1)
+    carr = np.abs(np.moveaxis(attrib.detach().cpu().numpy(), 1, -1)).sum(-1, keepdims=True)
     carr /= np.abs(carr).sum((1, 2, 3), keepdims=True)
     if output.isatty():
         imprint(colorize(carr.squeeze(3), cmap='bwr'), montage=True)

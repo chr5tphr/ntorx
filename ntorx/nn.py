@@ -69,7 +69,7 @@ class PaSU(nn.Module):
         out = torch.nn.functional.relu(x)
         if not self.relu:
             beta = torch.clamp(self.beta, self.epsilon)
-            threshold = self.threshold(beta)
+            threshold = self.threshold(beta)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
             mask = (x < threshold) * (x > -threshold)
             fmask = mask.nonzero()[:, 1]
             if fmask.shape[0] > 0:
