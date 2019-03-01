@@ -61,7 +61,7 @@ class Parametric(Module):
     def loss_params(self):
         pass
 
-class SequentialParametric(Sequential, Parametric):
+class FeedForwardParametric(Parametric):
     def train_params(self, loader, optimizer, validloader=None, nepochs=1, spath=None, start=0, sfreq=5, nslope=5, slope_fn=None, **kwargs):
         nsampmx = len(loader.dataset)
 

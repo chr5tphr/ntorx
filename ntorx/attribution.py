@@ -29,7 +29,7 @@ class GradientAttributor(Attributor):
     def attribution(self, out=None, inpt=None):
         a = self._in if inpt is None else inpt
         a.requires_grad_()
-        z = self(a)
+        z = self(a).sum()
         out, = torch.autograd.grad(z, a, grad_outputs=out, retain_graph=True)
         return out
 
