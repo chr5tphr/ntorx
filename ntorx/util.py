@@ -2,7 +2,7 @@ import logging
 from sys import stdout
 from os import environ, get_terminal_size
 
-def config_logger(fd, reset=True):
+def config_logger(fd, level=logging.INFO, reset=True):
     handler = logging.StreamHandler(fd)
     frmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(frmt)
@@ -10,7 +10,7 @@ def config_logger(fd, reset=True):
     if reset:
         logger.handlers.clear()
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
 
     return logger
 

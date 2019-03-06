@@ -91,7 +91,7 @@ class FeedForwardParametric(Parametric):
                     del loss
 
                     nsamp += len(data)
-                    logger.info('Processed %d/%d samples...', nsamp, nsampmx)
+                    logger.debug('Processed %d/%d samples...', nsamp, nsampmx)
                     del x, y, t
 
                 logger.info('Epoch: %03d, train-loss: %.2e'%(epoch+1, closs/nsamp))
@@ -155,7 +155,7 @@ class FeedForwardParametric(Parametric):
             acc += (y.detach().argmax(1) == t).sum().item()
 
             nsamp += len(data)
-            logger.info('Processed %d/%d samples...', nsamp, nsampmx)
+            logger.debug('Processed %d/%d samples...', nsamp, nsampmx)
             del x, t, y
         acc /= nsampmx
         return acc
