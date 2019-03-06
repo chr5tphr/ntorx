@@ -21,9 +21,15 @@ from torch import nn
 from ntorx.attribution import DTDZPlus, DTDZB, ShapeAttributor, SequentialAttributor, PassthroughAttributor, GradientAttributor
 from ntorx.image import colorize, montage, imgify
 from ntorx.model import Parametric, FeedForwardParametric
-from ntorx.nn import Dense, BatchView, PaSU, Conv2d, Sequential
+from ntorx.nn import BatchView, PaSU, Sequential
 from ntorx.util import config_logger
 
+try:
+    from ntorx.nn import Dense, Conv2d
+except ImportError:
+    from ntorx.nn import __getattr__ as _getlin
+    Dense = _getlin('Dense')
+    Conv2d = _getlin('Conv2d')
 
 logger = getLogger()
 
@@ -52,7 +58,7 @@ class FeedFwd(Sequential, FeedForwardParametric):
         )
 
 class VGG16(FeedForwardParametric):
-    def __init__(self, in_dim, out_dim, relu=True, beta=20, init_weights=True):
+    def __init__(self, in_dim, out_dim, relu=True, beta=20, init_weights=True, batch_norm=False):
         super().__init__()
         def make_layers(cfg, batch_norm=False):
             layers = []
@@ -68,7 +74,7 @@ class VGG16(FeedForwardParametric):
                         layers += [conv2d, PaSU(v, relu=relu, init=beta)]
                     in_channels = v
             return Sequential(*layers)
-        self.features = make_layers(vggconfig['D'])
+        self.features = make_layers(vggconfig['D'], batch_norm=batch_norm)
         self.avgpool = AdaptiveAvgPool2d((7, 7))
         self.classifier = Sequential(
             Dense(512 * 7 * 7, 4096),
@@ -102,47 +108,64 @@ class VGG16(FeedForwardParametric):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
-@click.group()
+@click.group(chain=True)
 @click.option('--log', type=click.File(), default=stdout)
+@click.option('-v', '--verbose', count=True)
 @click.option('--threads', type=int, default=0)
-@click.option('--workers', type=int, default=4)
-@click.option('--download/--no-download', default=False)
 @click.option('--device', default='cuda:0' if torch.cuda.is_available() else 'cpu')
-@click.option('--datapath', default=path.join(xdg_data_home(), 'dataset'))
 @click.pass_context
-def main(ctx, log, threads, workers, download, device, datapath):
+def main(ctx, log, verbose, threads, device):
     torch.set_num_threads(threads)
-    config_logger(log)
+    config_logger(log, level='DEBUG' if verbose > 0 else 'INFO')
 
     ctx.ensure_object(Namespace)
-    ctx.obj.download = download
     ctx.obj.device = torch.device(device)
-    ctx.obj.data = datapath
-    ctx.obj.workers = workers
 
 @main.command()
-@click.option('-c', '--checkpoint', type=click.Path())
 @click.option('-l', '--load', type=click.Path())
-@click.option('-s', '--start', type=int, default=0)
-@click.option('-n', '--nepochs', type=int, default=10)
-@click.option('-b', '--bsize', type=int, default=32)
-@click.option('-f', '--sfreq', type=int, default=1)
-@click.option('--nslope', type=int, default=5)
-@click.option('--lr', type=float, default=1e-3)
 @click.option('--beta', type=float, default=1e2)
 @click.option('--force-relu/--no-force-relu', default=False)
+@click.option('--batchnorm/--no-batchnorm', default=False)
 @click.pass_context
-def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, beta, force_relu):
-    #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=transf, download=ctx.obj.download)
-    loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
-
+def model(ctx, load, beta, force_relu, batchnorm):
     #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
-    model = VGG16(3, 10, relu=force_relu, beta=beta)
+    model = GradientAttributor.of(VGG16)(3, 10, relu=force_relu, beta=beta, init_weights=load is None, batch_norm=batchnorm)
     if load is not None:
         model.load_params(load)
     model.device(ctx.obj.device)
+    ctx.obj.model = model
+
+@main.command()
+@click.option('-b', '--bsize', type=int, default=32)
+@click.option('--train/--test', default=True)
+@click.option('--datapath', default=path.join(xdg_data_home(), 'dataset'))
+@click.option('--download/--no-download', default=False)
+@click.option('--workers', type=int, default=4)
+@click.pass_context
+def data(ctx, bsize, train, datapath, download, workers):
+    if train:
+        #dataset = MNIST(root=data, train=True , transform=Compose([Pad(2), ToTensor()]), download=download)
+        transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        dataset = CIFAR10(root=datapath, train=True , transform=transf, download=download)
+        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=workers)
+    else:
+        #dataset = MNIST(root=data, train=True , transform=Compose([Pad(2), ToTensor()]), download=download)
+        transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        dataset = CIFAR10(root=datapath, train=False , transform=transf, download=download)
+        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=workers)
+    ctx.obj.loader = loader
+
+@main.command()
+@click.option('-c', '--checkpoint', type=click.Path())
+@click.option('-s', '--start', type=int, default=0)
+@click.option('-n', '--nepochs', type=int, default=10)
+@click.option('-f', '--sfreq', type=int, default=1)
+@click.option('--nslope', type=int, default=5)
+@click.option('--lr', type=float, default=1e-3)
+@click.pass_context
+def train(ctx, checkpoint, start, nepochs, sfreq, nslope, lr):
+    loader = ctx.obj.loader
+    model = ctx.obj.model
 
     optargs = []
     wparams = chain(*[module.parameters() for module in model.modules() if not isinstance(module, (FeedForwardParametric, torch.nn.Sequential, PaSU))])
@@ -153,27 +176,17 @@ def train(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, beta,
 
 @main.command()
 @click.option('-c', '--checkpoint', type=click.Path())
-@click.option('-l', '--load', type=click.Path())
 @click.option('-s', '--start', type=int, default=0)
 @click.option('-n', '--nepochs', type=int, default=10)
-@click.option('-b', '--bsize', type=int, default=32)
 @click.option('-f', '--sfreq', type=int, default=1)
 @click.option('--nslope', type=int, default=5)
 @click.option('--lr', type=float, default=1e-3)
 @click.option('--beta-decay', type=float, default=1e-3)
 @click.option('--fix-weights/--no-fix-weights', default=True)
 @click.pass_context
-def betatune(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fix_weights, beta_decay):
-    #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-    dataset = CIFAR10(root=ctx.obj.data, train=True , transform=transf, download=ctx.obj.download)
-    loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
-
-    #model = FeedFwd((1, 32, 32), 10, relu=force_relu, beta=beta)
-    model = VGG16(3, 10, relu=force_relu, beta=beta)
-    if load is not None:
-        model.load_params(load)
-    model.device(ctx.obj.device)
+def betatune(ctx, checkpoint, start, nepochs, sfreq, nslope, lr, fix_weights, beta_decay):
+    loader = ctx.obj.loader
+    model = ctx.obj.model
 
     optargs = []
     if not fix_weights:
@@ -186,46 +199,20 @@ def betatune(ctx, checkpoint, load, start, nepochs, bsize, sfreq, nslope, lr, fi
     model.train_params(loader, optimizer, nepochs=nepochs, nslope=nslope, spath=checkpoint, start=start, sfreq=sfreq)
 
 @main.command()
-@click.option('-l', '--load', type=click.Path())
-@click.option('-b', '--bsize', type=int, default=32)
-@click.option('--force-relu/--no-force-relu', default=False)
 @click.pass_context
-def validate(ctx, load, bsize, force_relu):
-    #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-    dataset = CIFAR10(root=ctx.obj.data, train=False , transform=transf, download=ctx.obj.download)
-    loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
-
-    #model = FeedFwd((1, 32, 32), 10, relu=force_relu)
-    model = VGG16(3, 10, relu=force_relu)
-    if load is not None:
-        model.load_params(load)
-    else:
-        logger.warning('Using random model parameters for validation!')
-    model.device(ctx.obj.device)
+def validate(ctx):
+    loader = ctx.obj.loader
+    model = ctx.obj.model
 
     acc = model.test_params(loader)
     logger.info('Accuracy: {:.3f}'.format(acc))
 
 @main.command()
-@click.option('-l', '--load', type=click.Path())
-@click.option('-b', '--bsize', type=int, default=32)
 @click.option('-o', '--output', type=click.File(mode='wb'), default=stdout.buffer)
-@click.option('--force-relu/--no-force-relu', default=False)
 @click.pass_context
-def attribution(ctx, load, bsize, output, force_relu):
-    #dataset = MNIST(root=ctx.obj.data, train=True , transform=Compose([Pad(2), ToTensor()]), download=ctx.obj.download)
-    transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-    dataset = CIFAR10(root=ctx.obj.data, train=False , transform=transf, download=ctx.obj.download)
-    loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=ctx.obj.workers)
-
-    #model = GradientAttributor.of(FeedFwd)((1, 32, 32), 10, relu=force_relu)
-    model = GradientAttributor.of(VGG16)(3, 10, relu=force_relu)
-    if load is not None:
-        model.load_params(load)
-    else:
-        logger.warning('Using random model parameters for attribution!')
-    model.to(model.device(ctx.obj.device))
+def attribution(ctx, output):
+    loader = ctx.obj.loader
+    model = ctx.obj.model
 
     data, label = next(iter(loader))
     data = data.to(ctx.obj.device)
