@@ -104,6 +104,9 @@ _linears = {
     'Conv1d': nn.Conv1d,
     'Conv2d': nn.Conv2d,
     'Conv3d': nn.Conv3d,
+    'BatchNorm1d': nn.BatchNorm1d,
+    'BatchNorm2d': nn.BatchNorm2d,
+    'BatchNorm3d': nn.BatchNorm3d,
 }
 
 _lintypes = {name: type(name, (Linear, base), {}) for name, base in _linears.items()}

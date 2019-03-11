@@ -11,7 +11,7 @@ import torch
 
 from PIL import Image
 from tctim import imprint
-from torch.nn import Dropout, MaxPool2d, BatchNorm2d, AdaptiveAvgPool2d
+from torch.nn import Dropout, MaxPool2d, AdaptiveAvgPool2d
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST, CIFAR10
 from torchvision.models.vgg import cfg as vggconfig
@@ -25,11 +25,12 @@ from ntorx.nn import BatchView, PaSU, Sequential
 from ntorx.util import config_logger
 
 try:
-    from ntorx.nn import Dense, Conv2d
+    from ntorx.nn import Dense, Conv2d, BatchNorm2d
 except ImportError:
     from ntorx.nn import __getattr__ as _getlin
     Dense = _getlin('Dense')
     Conv2d = _getlin('Conv2d')
+    BatchNorm2d = _getlin('BatchNorm2d')
 
 logger = getLogger()
 
@@ -108,6 +109,17 @@ class VGG16(FeedForwardParametric):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
+class ChoiceList(click.Choice):
+    def __init__(self, *args, separator=',', **kwargs):
+        super().__init__(*args, **kwargs)
+        self.separator = separator
+
+    def convert(self, values, param, ctx):
+        retval = []
+        for val in values.split(self.separator):
+            retval.append(super(click.Choice, self).convert(val, param, ctx))
+        return retval
+
 @click.group(chain=True)
 @click.option('--log', type=click.File(), default=stdout)
 @click.option('-v', '--verbose', count=True)
@@ -139,40 +151,55 @@ def model(ctx, load, beta, force_relu, batchnorm):
 @click.option('-b', '--bsize', type=int, default=32)
 @click.option('--train/--test', default=True)
 @click.option('--datapath', default=path.join(xdg_data_home(), 'dataset'))
+@click.option('--dataset', type=click.Choice(['CIFAR10', 'MNIST']), default='CIFAR10')
 @click.option('--download/--no-download', default=False)
 @click.option('--workers', type=int, default=4)
 @click.pass_context
-def data(ctx, bsize, train, datapath, download, workers):
-    if train:
-        #dataset = MNIST(root=data, train=True , transform=Compose([Pad(2), ToTensor()]), download=download)
-        transf  = Compose([RandomCrop(32, padding=4), RandomHorizontalFlip(), ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-        dataset = CIFAR10(root=datapath, train=True , transform=transf, download=download)
-        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=workers)
+def data(ctx, bsize, train, datapath, dataset, download, workers):
+    if dataset == 'CIFAR10':
+        transf = Compose(([RandomCrop(32, padding=4), RandomHorizontalFlip()] if train else []) + [ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+        dset = CIFAR10(root=datapath, train=train , transform=transf, download=download)
+    elif dataset == 'MNIST':
+        dset = MNIST(root=data, train=train , transform=Compose([Pad(2), ToTensor()]), download=download)
     else:
-        #dataset = MNIST(root=data, train=True , transform=Compose([Pad(2), ToTensor()]), download=download)
-        transf  = Compose([ToTensor(), Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-        dataset = CIFAR10(root=datapath, train=False , transform=transf, download=download)
-        loader  = DataLoader(dataset, bsize, shuffle=True, num_workers=workers)
+        raise RuntimeError('No such dataset!')
+    loader  = DataLoader(dset, bsize, shuffle=True, num_workers=workers)
     ctx.obj.loader = loader
 
 @main.command()
-@click.option('-c', '--checkpoint', type=click.Path())
-@click.option('-s', '--start', type=int, default=0)
-@click.option('-n', '--nepochs', type=int, default=10)
-@click.option('-f', '--sfreq', type=int, default=1)
-@click.option('--nslope', type=int, default=5)
+@click.option('--param', type=ChoiceList(['weight', 'bias', 'beta', 'all']), default=['weight', 'bias'])
 @click.option('--lr', type=float, default=1e-3)
+@click.option('--decay', type=float)
 @click.pass_context
-def train(ctx, checkpoint, start, nepochs, sfreq, nslope, lr):
-    loader = ctx.obj.loader
+def optimize(ctx, param, lr, decay):
     model = ctx.obj.model
 
     optargs = []
-    wparams = chain(*[module.parameters() for module in model.modules() if not isinstance(module, (FeedForwardParametric, torch.nn.Sequential, PaSU))])
-    optargs += [{'params': wparams, 'lr': lr}]
-    optimizer = torch.optim.Adam(optargs)
+    if 'weight' in param:
+        params = (module.weight for module in model.modules() if isinstance(module, Linear))
+        arg = {'params': params, 'lr': lr}
+        if decay:
+            arg['weight_decay'] = decay
+        optargs.append(arg)
+    if 'bias' in param:
+        params = (module.bias for module in model.modules() if isinstance(module, Linear))
+        arg = {'params': params, 'lr': lr}
+        if decay:
+            arg['weight_decay'] = decay
+        optargs.append(arg)
+    if 'beta' in param:
+        params = (module.beta for module in model.modules() if isinstance(module, PaSU))
+        arg = {'params': params, 'lr': lr}
+        if decay:
+            arg['weight_decay'] = decay
+        optargs.append(arg)
+    if 'all' in param:
+        arg = {'params': model.parameters(), 'lr': lr}
+        if decay:
+            arg['weight_decay'] = decay
+        optargs.append(arg)
 
-    model.train_params(loader, optimizer, nepochs=nepochs, nslope=nslope, spath=checkpoint, start=start, sfreq=sfreq)
+    ctx.obj.optimizer = torch.optim.Adam(optargs)
 
 @main.command()
 @click.option('-c', '--checkpoint', type=click.Path())
@@ -180,32 +207,36 @@ def train(ctx, checkpoint, start, nepochs, sfreq, nslope, lr):
 @click.option('-n', '--nepochs', type=int, default=10)
 @click.option('-f', '--sfreq', type=int, default=1)
 @click.option('--nslope', type=int, default=5)
-@click.option('--lr', type=float, default=1e-3)
-@click.option('--beta-decay', type=float, default=1e-3)
-@click.option('--fix-weights/--no-fix-weights', default=True)
 @click.pass_context
-def betatune(ctx, checkpoint, start, nepochs, sfreq, nslope, lr, fix_weights, beta_decay):
+def train(ctx, checkpoint, start, nepochs, sfreq, nslope):
     loader = ctx.obj.loader
     model = ctx.obj.model
-
-    optargs = []
-    if not fix_weights:
-        wparams = chain(*[module.parameters() for module in model.modules() if not isinstance(module, (FeedForwardParametric, torch.nn.Sequential, PaSU))])
-        optargs += [{'params': wparams, 'lr': lr}]
-    pparams = chain(*[module.parameters() for module in model.modules() if isinstance(module, PaSU)])
-    optargs += [{'params': pparams, 'lr': lr, 'weight_decay': beta_decay}]
-    optimizer = torch.optim.Adam(optargs)
+    optimizer = ctx.obj.optimizer
 
     model.train_params(loader, optimizer, nepochs=nepochs, nslope=nslope, spath=checkpoint, start=start, sfreq=sfreq)
 
 @main.command()
+@click.option('-o', '--output', type=click.File(mode='w'), default=stdout)
 @click.pass_context
-def validate(ctx):
+def validate(ctx, output):
     loader = ctx.obj.loader
     model = ctx.obj.model
 
     acc = model.test_params(loader)
-    logger.info('Accuracy: {:.3f}'.format(acc))
+    output.write('Accuracy: {:.3f}\n'.format(acc))
+
+@main.command()
+@click.option('-o', '--output', type=click.File(mode='w'), default=stdout)
+@click.pass_context
+def betastat(ctx, output):
+    model = ctx.obj.model
+
+    params = (module.beta for module in model.modules() if isinstance(module, PaSU))
+    stats = [(param.data.mean().item(), param.data.std().item()) for param in params]
+
+    head = '{: ^3} {: ^10} {: ^10}\n'.format('#', 'mean', 'std')
+    info = '\n'.join('{: >3d} {: >10.2e} {: >10.2e}'.format(n, *stat) for n, stat in enumerate(stats)) + '\n'
+    output.write(head + info)
 
 @main.command()
 @click.option('-o', '--output', type=click.File(mode='wb'), default=stdout.buffer)
@@ -229,4 +260,4 @@ def attribution(ctx, output):
         Image.fromarray(imgify(img)).save(output, format='png')
 
 if __name__ == '__main__':
-    main()
+    main(auto_envvar_prefix='PASU')
