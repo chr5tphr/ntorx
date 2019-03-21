@@ -48,9 +48,13 @@ class Parametric(Module):
         torch.save(self.state_dict(), dest)
         return dest
 
-    def load_params(self, fpath, *args, **kwargs):
+    def load_params(self, fpath, *args, trans=None, strict=True, **kwargs):
         src  = fpath.format(*args, **kwargs)
-        self.load_state_dict(torch.load(src, map_location=self.device()))
+        obj = torch.load(src, map_location=self.device())
+        if trans is not None:
+            obj = {trans[k]: v for k, v in obj.items()}
+
+        self.load_state_dict(obj, strict=strict)
 
     def train_params(self):
         pass
