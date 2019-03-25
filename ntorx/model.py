@@ -5,7 +5,7 @@ from collections import OrderedDict
 from logging import getLogger
 
 from torch.utils.data import DataLoader
-from torch.nn import CrossEntropyLoss, init
+from torch.nn import CrossEntropyLoss, init, DataParallel
 from torch.optim import Adam
 
 from .nn import BatchView, Sequential
@@ -13,9 +13,10 @@ from .nn import BatchView, Sequential
 logger = getLogger(__name__)
 
 class Parametric(Module):
-    def __init__(self, *args, device=None, **kwargs):
+    def __init__(self, *args, device=None, parallel=False, **kwargs):
         super().__init__(*args, **kwargs)
         self._dev = device
+        self.parallel = parallel
 
     def init_params(self):
         def _init(X):
@@ -72,6 +73,7 @@ class FeedForwardParametric(Parametric):
         self.to(self.device())
 
         lossfn = CrossEntropyLoss()
+        fwdfn = DataParallel(self) if self.parallel else self
 
         self.train()
         valoss = []
@@ -85,7 +87,7 @@ class FeedForwardParametric(Parametric):
                     x = data.to(self.device())
                     t = label.to(self.device())
 
-                    y = self(x)
+                    y = fwdfn(x)
                     loss = lossfn(y, t)
                     closs += loss.detach().item()
 
@@ -143,6 +145,7 @@ class FeedForwardParametric(Parametric):
 
     def test_params(self, loader):
         self.to(self.device())
+        fwdfn = DataParallel(self) if self.parallel else self
 
         self.train(False)
         acc = 0
@@ -154,7 +157,7 @@ class FeedForwardParametric(Parametric):
             x = data.to(self.device())
             t = label.to(self.device())
             with torch.no_grad():
-                y = self(x)
+                y = fwdfn(x)
 
             acc += (y.detach().argmax(1) == t).sum().item()
 
@@ -166,6 +169,7 @@ class FeedForwardParametric(Parametric):
 
     def loss_params(self, loader):
         self.to(self.device())
+        fwdfn = DataParallel(self) if self.parallel else self
 
         lossfn = CrossEntropyLoss()
         loss = 0
@@ -175,7 +179,7 @@ class FeedForwardParametric(Parametric):
         for data, label in loader:
             x = data.to(self.device())
             t = label.to(self.device())
-            y = self(x)
+            y = fwdfn(x)
 
             loss += lossfn(y, t).item()
         return loss/len(loader.dataset)
