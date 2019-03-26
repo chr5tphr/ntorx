@@ -131,8 +131,9 @@ class FeedForwardParametric(Parametric):
                         else:
                             slope_fn()
             except BaseException as err:
-                dest = self.save_params(spath, epoch=epoch+1, error=type(err).__name__, **kwargs)
-                logger.info('Emergency-saved parameters to \'{}\''.format(dest))
+                if spath:
+                    dest = self.save_params(spath, epoch=epoch+1, error=type(err).__name__, **kwargs)
+                    logger.info('Emergency-saved parameters to \'{}\''.format(dest))
                 raise err
 
             # Save model params
@@ -147,7 +148,7 @@ class FeedForwardParametric(Parametric):
         self.to(self.device())
         fwdfn = DataParallel(self) if self.parallel else self
 
-        self.train(False)
+        self.eval()
         acc = 0
         nsamp = 0
         nsampmx = len(loader.dataset)

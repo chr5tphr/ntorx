@@ -4,6 +4,8 @@ from torch import nn
 from contextlib import contextmanager
 from collections import OrderedDict
 
+from .func import softplus_relu_diff
+
 class Sequential(nn.Sequential):
     """
     """
@@ -56,9 +58,6 @@ class PaSU(nn.Module):
         self.relu = relu
         self.reset_parameters()
 
-    def threshold(self, beta):
-        return -torch.log(torch.exp(beta * self.epsilon) - 1.) / beta
-
     def reset_parameters(self):
         torch.nn.init.constant_(self.beta, self._init)
 
@@ -66,15 +65,11 @@ class PaSU(nn.Module):
         self.relu = mode
 
     def forward(self, x):
-        out = torch.nn.functional.relu(x)
+        retval = torch.nn.functional.relu(x)
         if not self.relu:
-            beta = torch.clamp(self.beta, self.epsilon)
-            threshold = self.threshold(beta)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
-            mask = (x < threshold) * (x > -threshold)
-            fmask = mask.nonzero()[:, 1]
-            if fmask.shape[0] > 0:
-                out[mask] = torch.log(torch.exp(beta[fmask] * x[mask]) + 1.) / beta[fmask]
-        return out
+            bcast = torch.clamp(self.beta, self.epsilon)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+            retval += softplus_relu_diff(x, bcast)
+        return retval
 
 
 class Linear(nn.Module):

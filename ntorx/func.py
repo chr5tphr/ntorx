@@ -71,3 +71,6 @@ def zdiv_(a, b):
     mask = b != 0
     a[mask] = a[mask] / b[mask]
     return a
+
+def softplus_relu_diff(x, beta):
+    return torch.log(1. + torch.exp(-beta*torch.abs(x))) / beta
