@@ -72,5 +72,38 @@ def zdiv_(a, b):
     a[mask] = a[mask] / b[mask]
     return a
 
+
 def softplus_relu_diff(x, beta):
     return torch.log(1. + torch.exp(-beta*torch.abs(x))) / beta
+
+class Softplus(torch.autograd.Function):
+    """
+        Note that for beta ~ 1e-5 the gradient is not stable
+    """
+    @staticmethod
+    def forward(ctx, x, beta):
+        bcast = beta.clamp_(1e-5)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+        # ln(1 + exp(-beta*|x|) )
+        npwr = x.abs().neg_().mul_(bcast).exp_().log1p_().div_(bcast)
+        out = torch.nn.functional.relu(x).add_(npwr)
+        ctx.save_for_backward(x, beta)
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        x, beta = ctx.saved_tensors
+        bcast = beta[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+        xnabs = x.abs().neg_()
+        npwr = xnabs.mul(bcast).exp_()
+        npwr1p = 1. + npwr
+
+        grad_x = x.sign().neg_().mul_(npwr).div_(npwr1p)
+        grad_x += torch.nn.functional.relu(x).sign_()
+        grad_x *= grad_out
+
+        grad_beta = xnabs.mul_(npwr).div_(npwr1p)
+        grad_beta += npwr.log1p_().div_(bcast).neg_()
+        grad_beta /= bcast
+        grad_beta *= grad_out
+        grad_beta = grad_beta.sum((0,) + tuple(range(2, len(x.shape))) )
+        return grad_x, grad_beta

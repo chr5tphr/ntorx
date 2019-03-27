@@ -4,7 +4,7 @@ from torch import nn
 from contextlib import contextmanager
 from collections import OrderedDict
 
-from .func import softplus_relu_diff
+from .func import Softplus, softplus_relu_diff
 
 class Sequential(nn.Sequential):
     """
@@ -65,12 +65,15 @@ class PaSU(nn.Module):
         self.relu = mode
 
     def forward(self, x):
-        retval = torch.nn.functional.relu(x)
-        if not self.relu:
-            bcast = torch.clamp(self.beta, self.epsilon)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
-            retval += softplus_relu_diff(x, bcast)
-        return retval
-
+        #retval = torch.nn.functional.relu(x)
+        #if not self.relu:
+        #    bcast = torch.clamp(self.beta, self.epsilon)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+        #    retval += softplus_relu_diff(x, bcast)
+        #return retval
+        if self.relu:
+            return torch.nn.functional.relu(x)
+        else:
+            return Softplus.apply(x, self.beta)
 
 class Linear(nn.Module):
     """Abstract Class for linear layers with weights and biases.
