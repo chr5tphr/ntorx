@@ -8,8 +8,8 @@ from .func import zdiv
 
 class Attributor(Module):
     @classmethod
-    def of(clss, ttype):
-        return type('%s%s'%(clss.__name__, ttype.__name__), (clss, ttype), {})
+    def of(cls, ttype):
+        return type('%s%s'%(cls.__name__, ttype.__name__), (cls, ttype), {})
 
     def attribution(self, out):
         raise NotImplementedError()
@@ -57,7 +57,7 @@ class PiecewiseLinearAttributor(Linear, Attributor):
         return super().forward(x)
 
     @classmethod
-    def of(clss, ttype):
+    def of(cls, ttype):
         assert issubclass(ttype, Linear)
         return super().of(ttype)
 
@@ -172,11 +172,9 @@ class DTDZB(PiecewiseLinearAttributor):
             bplus  = torch.clamp(bias, max=0.)
             bminus = torch.clamp(bias, min=0.)
 
-        upper = torch.ones_like(a)*hi
-        lower = torch.ones_like(a)*lo
+        upper = torch.full_like(a, hi, requires_grad=True)
+        lower = torch.full_like(a, lo, requires_grad=True)
         a.requires_grad_()
-        upper.requires_grad_()
-        lower.requires_grad_()
 
         with autograd.enable_grad():
             z = self(a)
@@ -188,6 +186,5 @@ class DTDZB(PiecewiseLinearAttributor):
 
             zlh = z - zplus - zminus
         agrad, lgrad, ugrad = autograd.grad((zlh,), (a, lower, upper), grad_outputs=(zdiv(R, zlh),), retain_graph=True)
-        #zlh.backward(zdiv(R, zlh), retain_graph=True)
         return a*agrad + lower*lgrad + upper*ugrad
 

@@ -82,7 +82,7 @@ class Softplus(torch.autograd.Function):
     """
     @staticmethod
     def forward(ctx, x, beta):
-        bcast = beta.clamp_(1e-5)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+        bcast = beta.clamp(1e-5)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
         # ln(1 + exp(-beta*|x|) )
         npwr = x.abs().neg_().mul_(bcast).exp_().log1p_().div_(bcast)
         out = torch.nn.functional.relu(x).add_(npwr)
@@ -92,7 +92,7 @@ class Softplus(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_out):
         x, beta = ctx.saved_tensors
-        bcast = beta[(None, slice(None)) + (None,)*(len(x.shape)-2)]
+        bcast = beta.clamp(1e-5)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
         xnabs = x.abs().neg_()
         npwr = xnabs.mul(bcast).exp_()
         npwr1p = 1. + npwr
