@@ -11,6 +11,15 @@ class Attributor(Module):
     def of(cls, ttype):
         return type('%s%s'%(cls.__name__, ttype.__name__), (cls, ttype), {})
 
+    @classmethod
+    def cast(cls, obj, *args, **kwargs):
+        assert isinstance(obj, Module)
+        newcls = cls.of(obj.__class__)
+        newobj = object.__new__(newcls)
+        cls.__init__(newobj, *args, **kwargs)
+        newobj.__dict__.update(obj.__dict__)
+        return newobj
+
     def attribution(self, out):
         raise NotImplementedError()
 
@@ -97,6 +106,31 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
 
         return a*(cplus - cminus)
 
+class LRPEpsilon(PiecewiseLinearAttributor):
+    def __init__(self, *args, epsilon=1e-1, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._epsilon = epsilon
+        self._use_bias = use_bias
+
+    def attribution(self, out):
+        R = out
+        a = self._in
+        epsilon = self._epsilon
+
+        weight = self.weight.data
+
+        bias = None
+        if self._use_bias is not None:
+            bias   = self.bias.data
+
+        a.requires_grad_()
+
+        with self.with_params(weight, bias), autograd.enable_grad():
+            z = swap(a)
+        c, = autograd.grad(z, a, grad_outputs=zdiv(R, z + z.sign() * epsilon), retain_graph=True)
+
+        return a*c
+
 class DTDZPlus(PiecewiseLinearAttributor):
     def __init__(self, *args, use_bias=False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -131,12 +165,12 @@ class DTDWSquare(PiecewiseLinearAttributor):
         R = out
         a = self._in
 
-        weight = self.weight
+        weight = self.weight.data
         wsquare = weight**2
 
         bplus = None
         if self._use_bias is not None:
-            bias = self.bias
+            bias = self.bias.data
             bsquare = bias**2
 
         a.requires_grad_()
@@ -187,4 +221,24 @@ class DTDZB(PiecewiseLinearAttributor):
             zlh = z - zplus - zminus
         agrad, lgrad, ugrad = autograd.grad((zlh,), (a, lower, upper), grad_outputs=(zdiv(R, zlh),), retain_graph=True)
         return a*agrad + lower*lgrad + upper*ugrad
+
+class PoolingAttributor(Attributor):
+    def __init__(self, *args, pool_op=None, **kwargs)
+        super().__init__(*args, **kwargs)
+        self._pool_op = self if pool_op is None else pool_op
+
+    def forward(self, x):
+        self._in = x
+        return super().forward(x)
+
+    def attribution(self, out):
+        R = out
+        a = self._in
+
+        a.requires_grad_()
+        with autograd.enable_grad():
+            z = self._pool_op(a)
+        cplus, = autograd.grad(z, a, grad_outputs=zdiv(R, z), retain_graph=True)
+
+        return a*cplus
 
