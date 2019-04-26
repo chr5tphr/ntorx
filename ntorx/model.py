@@ -73,7 +73,7 @@ class FeedForwardParametric(Parametric):
         self.to(self.device())
 
         lossfn = CrossEntropyLoss()
-        fwdfn = DataParallel(self) if self.parallel else self
+        fwdfn = DataParallel(self).forward if self.parallel else self.forward
 
         self.train()
         valoss = []

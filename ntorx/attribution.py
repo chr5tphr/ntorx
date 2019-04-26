@@ -106,6 +106,28 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
 
         return a*(cplus - cminus)
 
+class LRPFlat(PiecewiseLinearAttributor):
+    def __init__(self, *args, use_bias=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._use_bias = use_bias
+
+    def attribution(self, out):
+        R = out
+        a = self._in
+
+        weight = self.weight.data
+        wone = torch.ones_like(weight)
+
+        aone = torch.ones_like(a)
+        aone.requires_grad_()
+
+        with self.with_params(wone, None) as swap, autograd.enable_grad():
+            z = swap(aone)
+        zone = torch.ones_like(z)
+        c, = autograd.grad(z, aone, grad_outputs=zdiv(R, zone), retain_graph=True)
+
+        return c
+
 class LRPEpsilon(PiecewiseLinearAttributor):
     def __init__(self, *args, epsilon=1e-1, use_bias=False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -125,7 +147,7 @@ class LRPEpsilon(PiecewiseLinearAttributor):
 
         a.requires_grad_()
 
-        with self.with_params(weight, bias), autograd.enable_grad():
+        with self.with_params(weight, bias) as swap, autograd.enable_grad():
             z = swap(a)
         c, = autograd.grad(z, a, grad_outputs=zdiv(R, z + z.sign() * epsilon), retain_graph=True)
 
@@ -223,9 +245,9 @@ class DTDZB(PiecewiseLinearAttributor):
         return a*agrad + lower*lgrad + upper*ugrad
 
 class PoolingAttributor(Attributor):
-    def __init__(self, *args, pool_op=None, **kwargs)
+    def __init__(self, *args, pool_op=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self._pool_op = self if pool_op is None else pool_op
+        self._pool_op = self.forward if pool_op is None else pool_op
 
     def forward(self, x):
         self._in = x
