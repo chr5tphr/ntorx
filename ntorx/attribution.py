@@ -42,6 +42,27 @@ class GradientAttributor(Attributor):
         out, = torch.autograd.grad(z, a, grad_outputs=out, retain_graph=True)
         return out
 
+class SmoothGradAttributor(Attributor):
+    def __init__(self, *args, std=1.0, niter=50, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._std = std
+        self._niter = niter
+
+    def forward(self, x):
+        self._in = x
+        return super().forward(x)
+
+    def attribution(self, out=None, inpt=None):
+        a = self._in if inpt is None else inpt
+        accu = torch.zeros_like(a)
+        for n in range(self.niter):
+            b = a + th.normal(th.zeros_like(a), th.full_like(a, self._std))
+            b.requires_grad_()
+            z = self(b).sum()
+            out, = torch.autograd.grad(z, b, grad_outputs=out, retain_graph=True)
+            accu += out / self.niter
+        return accu
+
 class PassthroughAttributor(Attributor):
     def attribution(self, out):
         return out

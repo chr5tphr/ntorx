@@ -83,7 +83,7 @@ class Softplus(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, beta):
         bcast = beta.clamp(1e-5)[(None, slice(None)) + (None,)*(len(x.shape)-2)]
-        # ln(1 + exp(-beta*|x|) )
+        # ln(1 + exp(-beta*|x|) ) / beta
         npwr = x.abs().neg_().mul_(bcast).exp_().log1p_().div_(bcast)
         out = torch.nn.functional.relu(x).add_(npwr)
         ctx.save_for_backward(x, beta)
