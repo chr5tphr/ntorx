@@ -55,12 +55,12 @@ class SmoothGradAttributor(Attributor):
     def attribution(self, out=None, inpt=None):
         a = self._in if inpt is None else inpt
         accu = torch.zeros_like(a)
-        for n in range(self.niter):
-            b = a + th.normal(th.zeros_like(a), th.full_like(a, self._std))
+        for n in range(self._niter):
+            b = a + torch.normal(torch.zeros_like(a), torch.full_like(a, self._std))
             b.requires_grad_()
             z = self(b).sum()
-            out, = torch.autograd.grad(z, b, grad_outputs=out, retain_graph=True)
-            accu += out / self.niter
+            tout, = torch.autograd.grad(z, b, grad_outputs=out, retain_graph=True)
+            accu += tout / self._niter
         return accu
 
 class PassthroughAttributor(Attributor):
@@ -105,15 +105,15 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
         beta = self._beta
 
         weight = self.weight.data
-        wplus  = torch.clamp(weight, max=0.)
-        wminus = torch.clamp(weight, min=0.)
+        wplus  = torch.clamp(weight, min=0.)
+        wminus = torch.clamp(weight, max=0.)
 
         bplus = None
         bminus = None
         if self._use_bias is not None:
             bias   = self.bias.data
-            bplus  = torch.clamp(bias, max=0.)
-            bminus = torch.clamp(bias, min=0.)
+            bplus  = torch.clamp(bias, min=0.)
+            bminus = torch.clamp(bias, max=0.)
 
         a.requires_grad_()
 
@@ -184,12 +184,12 @@ class DTDZPlus(PiecewiseLinearAttributor):
         a = self._in
 
         weight = self.weight.data
-        wplus  = torch.clamp(weight, max=0.)
+        wplus  = torch.clamp(weight, min=0.)
 
         bplus = None
         if self._use_bias is not None:
             bias = self.bias.data
-            bplus  = torch.clamp(bias, max=0.)
+            bplus  = torch.clamp(bias, min=0.)
 
         a.requires_grad_()
 
@@ -225,7 +225,7 @@ class DTDWSquare(PiecewiseLinearAttributor):
         return c
 
 class DTDZB(PiecewiseLinearAttributor):
-    def __init__(self, *args, lo=0, hi=1, use_bias=False, **kwargs):
+    def __init__(self, *args, lo=-1., hi=1., use_bias=False, **kwargs):
         super().__init__(*args, **kwargs)
         self._lo = lo
         self._hi = hi
@@ -238,16 +238,16 @@ class DTDZB(PiecewiseLinearAttributor):
         hi = self._hi
 
         weight = self.weight.data
-        wplus  = torch.clamp(weight, max=0.)
-        wminus = torch.clamp(weight, min=0.)
+        wplus  = torch.clamp(weight, min=0.)
+        wminus = torch.clamp(weight, max=0.)
 
         bias   = None
         bplus  = None
         bminus = None
         if self._use_bias is not None:
             bias   = self.bias.data
-            bplus  = torch.clamp(bias, max=0.)
-            bminus = torch.clamp(bias, min=0.)
+            bplus  = torch.clamp(bias, min=0.)
+            bminus = torch.clamp(bias, max=0.)
 
         upper = torch.full_like(a, hi, requires_grad=True)
         lower = torch.full_like(a, lo, requires_grad=True)
@@ -255,6 +255,7 @@ class DTDZB(PiecewiseLinearAttributor):
 
         with autograd.enable_grad():
             z = self(a)
+
             with self.with_params(wplus, bplus) as swap:
                 zplus = swap(lower)
 
@@ -262,7 +263,7 @@ class DTDZB(PiecewiseLinearAttributor):
                 zminus = swap(upper)
 
             zlh = z - zplus - zminus
-        agrad, lgrad, ugrad = autograd.grad((zlh,), (a, lower, upper), grad_outputs=(zdiv(R, zlh),), retain_graph=True)
+        agrad, lgrad, ugrad = autograd.grad((zlh,), (a, lower, upper), grad_outputs=(zdiv(R, zlh),)*3, retain_graph=True)
         return a*agrad + lower*lgrad + upper*ugrad
 
 class PoolingAttributor(Attributor):
