@@ -108,12 +108,13 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
         wplus  = torch.clamp(weight, min=0.)
         wminus = torch.clamp(weight, max=0.)
 
-        bplus = None
-        bminus = None
-        if self._use_bias is not None:
-            bias   = self.bias.data
+        bias   = self.bias.data
+        if self._use_bias:
             bplus  = torch.clamp(bias, min=0.)
             bminus = torch.clamp(bias, max=0.)
+        else:
+            bplus = torch.zeros_like(bias)
+            bminus = bplus
 
         a.requires_grad_()
 
@@ -128,24 +129,18 @@ class LRPAlphaBeta(PiecewiseLinearAttributor):
         return a*(cplus - cminus)
 
 class LRPFlat(PiecewiseLinearAttributor):
-    def __init__(self, *args, use_bias=False, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._use_bias = use_bias
-
     def attribution(self, out):
         R = out
         a = self._in
 
-        weight = self.weight.data
-        wone = torch.ones_like(weight)
+        weight = torch.ones_like(self.weight.data)
+        bias = torch.zeros_like(self.bias.data)
 
-        aone = torch.ones_like(a)
-        aone.requires_grad_()
+        a = torch.ones_like(a, requires_grad=True)
 
-        with self.with_params(wone, None) as swap, autograd.enable_grad():
-            z = swap(aone)
-        zone = torch.ones_like(z)
-        c, = autograd.grad(z, aone, grad_outputs=zdiv(R, zone), retain_graph=True)
+        with self.with_params(weight, bias) as swap, autograd.enable_grad():
+            z = swap(a)
+        c, = autograd.grad(z, a, grad_outputs=zdiv(R, z), retain_graph=True)
 
         return c
 
@@ -162,9 +157,11 @@ class LRPEpsilon(PiecewiseLinearAttributor):
 
         weight = self.weight.data
 
-        bias = None
-        if self._use_bias is not None:
-            bias   = self.bias.data
+        bias   = self.bias.data
+        if self._use_bias:
+            bias = self.bias.data
+        else:
+            bias = torch.zeros_like(bias)
 
         a.requires_grad_()
 
@@ -186,10 +183,11 @@ class DTDZPlus(PiecewiseLinearAttributor):
         weight = self.weight.data
         wplus  = torch.clamp(weight, min=0.)
 
-        bplus = None
-        if self._use_bias is not None:
-            bias = self.bias.data
-            bplus  = torch.clamp(bias, min=0.)
+        bias  = self.bias.data
+        if self._use_bias:
+            bplus = torch.clamp(bias, min=0.)
+        else:
+            bplus = torch.zeros_like(bias)
 
         a.requires_grad_()
 
@@ -211,14 +209,15 @@ class DTDWSquare(PiecewiseLinearAttributor):
         weight = self.weight.data
         wsquare = weight**2
 
-        bplus = None
-        if self._use_bias is not None:
-            bias = self.bias.data
+        bias   = self.bias.data
+        if self._use_bias:
             bsquare = bias**2
+        else:
+            bsquare = torch.zeros_like(bias)
 
-        a.requires_grad_()
+        a = torch.ones_like(a, requires_grad=True)
 
-        with self.with_params(wplus, bplus) as swap, autograd.enable_grad():
+        with self.with_params(wsquare, bsquare) as swap, autograd.enable_grad():
             z = swap(a)
         c, = autograd.grad(z, a, grad_outputs=zdiv(R, z), retain_graph=True)
 
@@ -241,13 +240,14 @@ class DTDZB(PiecewiseLinearAttributor):
         wplus  = torch.clamp(weight, min=0.)
         wminus = torch.clamp(weight, max=0.)
 
-        bias   = None
-        bplus  = None
-        bminus = None
-        if self._use_bias is not None:
-            bias   = self.bias.data
+        bias   = self.bias.data
+        if self._use_bias:
             bplus  = torch.clamp(bias, min=0.)
             bminus = torch.clamp(bias, max=0.)
+        else:
+            bias = torch.zeros_like(bias)
+            bplus = bias
+            bminus = bias
 
         upper = torch.full_like(a, hi, requires_grad=True)
         lower = torch.full_like(a, lo, requires_grad=True)
