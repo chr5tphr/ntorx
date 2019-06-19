@@ -6,7 +6,6 @@ setup(
     version = "0.1",
     packages=find_packages(),
     install_requires=[
-        'imageio>=2.4.1',
         'numpy>=1.15.4',
         'Pillow>=5.3.0',
         'scikit-image>=0.14.1',
